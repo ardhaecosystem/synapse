@@ -91,7 +91,12 @@ All configuration via environment variables or `hermes config setup`:
 | `SYNAPSE_BATCH_SIZE` | 5 | Turns per episode (optimization) |
 | `SYNAPSE_HALF_LIFE_DAYS` | 7.0 | Forgetting curve half-life |
 
-See [Configuration docs](docs/configuration.md) for all options.
+See the full documentation:
+
+- **[User Guide](docs/user-guide.md)** — Installation, configuration, tools reference, troubleshooting, FAQ
+- **[Architecture](docs/architecture.md)** — System design, data flow, optimizations
+- **[Configuration](docs/configuration.md)** — All environment variables, LLM providers, tuning guide
+- **[Hippocampus Layer](docs/hippocampus.md)** — Algorithm formulas, biological references, integration
 
 ## License
 
