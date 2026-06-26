@@ -52,10 +52,10 @@ docker exec synapse-falkordb redis-cli PING
 ### Step 2: Install Synapse
 
 ```bash
-# From PyPI (when published)
-pip install synapse-memory
+# From source (PyPI publication coming soon)
+pip install "git+https://github.com/ardhaecosystem/synapse.git"
 
-# Or from source
+# Or clone and install in editable mode
 git clone https://github.com/ardhaecosystem/synapse.git
 cd synapse
 pip install -e .

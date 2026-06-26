@@ -8,8 +8,7 @@ Temporal knowledge graph memory that doesn't just *store* — it *remembers*.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-94%20passing-brightgreen.svg)](https://github.com/ardhaecosystem/synapse/actions)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/ardhaecosystem/synapse/actions)
+[![CI](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml/badge.svg)](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](https://github.com/ardhaecosystem/synapse/blob/main/CONTRIBUTING.md)
 
 </div>
@@ -47,7 +46,7 @@ Three commands. That's it.
 docker run -d --name falkordb -p 6379:6379 falkordb/falkordb:latest
 
 # 2. Install Synapse
-pip install synapse-memory
+pip install "git+https://github.com/ardhaecosystem/synapse.git"
 
 # 3. Configure Hermes
 hermes config set memory.provider synapse
