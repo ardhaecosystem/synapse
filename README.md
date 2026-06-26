@@ -13,6 +13,11 @@ Temporal knowledge graph memory that doesn't just *store* — it *remembers*.
 
 </div>
 
+<p align="center">
+  <strong>Self-hosted temporal memory for AI agents.</strong><br>
+  If this project is useful to you, consider <a href="https://github.com/ardhaecosystem/synapse">⭐ starring the repo</a> — it helps others discover it.
+</p>
+
 ---
 
 ## The Problem
