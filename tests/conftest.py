@@ -3,10 +3,9 @@
 Provides a FalkorDB container fixture for integration tests.
 """
 
-import pytest
-import subprocess
-import time
 import socket
+
+import pytest
 
 
 def _is_falkordb_running(host="localhost", port=6379):
@@ -22,7 +21,10 @@ def _is_falkordb_running(host="localhost", port=6379):
 def falkordb():
     """Ensure FalkorDB is running for the test session."""
     if not _is_falkordb_running():
-        pytest.skip("FalkorDB not running on localhost:6379 — start with: docker run -d -p 6379:6379 falkordb/falkordb:latest")
+        pytest.skip(
+            "FalkorDB not running on localhost:6379 — "
+            "start with: docker run -d -p 6379:6379 falkordb/falkordb:latest"
+        )
     yield True
 
 

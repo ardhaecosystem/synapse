@@ -1,0 +1,7 @@
+name: synapse
+version: 0.1.0
+description: "Synapse — temporal knowledge graph memory for Hermes agents. Self-hosted FalkorDB + Graphiti with hippocampus-layer memory management."
+pip_dependencies:
+  - graphiti-core[falkordb]
+requires_env:
+  - SYNAPSE_FALKORDB_HOST

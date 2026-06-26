@@ -1,0 +1,295 @@
+"""SynapseMemoryProvider — full MemoryProvider ABC implementation.
+
+Optimizations baked in:
+- Batch episode ingestion (5 turns/episode) via TurnBuffer
+- BM25-only prefetch (no reranker) via RetrievalEngine
+- Background prefetch caching (zero blocking)
+- Merged tool schema (synapse_query, 76 tokens)
+- Minimal system prompt (15 tokens)
+- Trivial turn skipping (<10 chars)
+- Configurable half-life
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+class SynapseMemoryProvider:
+    """Temporal knowledge graph memory provider for Hermes Agent.
+
+    Designed to implement the Hermes MemoryProvider ABC when installed
+    as a plugin. The ABC methods match the Hermes agent.memory_provider
+    interface exactly.
+    """
+
+    def __init__(self):
+        self._config = None
+        self._graphiti = None
+        self._driver = None
+        self._retrieval = None
+        self._turn_buffer = None
+        self._session_id = ""
+        self._group_id = "default"
+        self._initialized = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._bg_thread: Optional[threading.Thread] = None
+
+    @property
+    def name(self) -> str:
+        return "synapse"
+
+    # -- Core lifecycle ------------------------------------------------------
+
+    def is_available(self) -> bool:
+        """Return True if FalkorDB connection info and LLM credentials are configured."""
+        return bool(
+            os.environ.get("SYNAPSE_FALKORDB_HOST")
+            and os.environ.get("SYNAPSE_LLM_API_KEY")
+            and os.environ.get("SYNAPSE_LLM_BASE_URL")
+        )
+
+    def initialize(self, session_id: str, **kwargs) -> None:
+        """Initialize Graphiti connection and build indices."""
+        from synapse.config import SynapseConfig
+        from synapse.encoding import TurnBuffer
+        from synapse.retrieval import RetrievalEngine
+
+        self._config = SynapseConfig.from_env()
+        self._session_id = session_id
+        self._group_id = kwargs.get("agent_identity", "default")
+
+        # Initialize Graphiti (for episode ingestion)
+        from graphiti_core import Graphiti
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+        from graphiti_core.driver.falkordb_driver import FalkorDriver
+        from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+        from graphiti_core.llm_client.config import LLMConfig
+        from graphiti_core.llm_client.openai_client import OpenAIClient
+
+        self._driver = FalkorDriver(
+            host=self._config.falkordb_host,
+            port=self._config.falkordb_port,
+            password=self._config.falkordb_password,
+            database=self._config.falkordb_database,
+        )
+        llm_config = LLMConfig(
+            api_key=self._config.llm_api_key,
+            model=self._config.llm_model,
+            base_url=self._config.llm_base_url,
+            small_model=self._config.llm_model,
+        )
+        self._graphiti = Graphiti(
+            graph_driver=self._driver,
+            llm_client=OpenAIClient(config=llm_config),
+            embedder=OpenAIEmbedder(config=OpenAIEmbedderConfig(
+                api_key=self._config.llm_api_key,
+                base_url=self._config.llm_base_url,
+                embedding_model=self._config.embedding_model,
+            )),
+            cross_encoder=OpenAIRerankerClient(config=llm_config),
+        )
+
+        # Background asyncio loop for async operations
+        self._loop = asyncio.new_event_loop()
+        self._bg_thread = threading.Thread(target=self._run_bg_loop, daemon=True)
+        self._bg_thread.start()
+
+        # Build indices
+        future = asyncio.run_coroutine_threadsafe(
+            self._graphiti.build_indices_and_constraints(), self._loop
+        )
+        future.result(timeout=30)
+
+        # Initialize retrieval engine (BM25-only, no Graphiti needed)
+        self._retrieval = RetrievalEngine(
+            host=self._config.falkordb_host,
+            port=self._config.falkordb_port,
+            group_id=self._group_id,
+            password=self._config.falkordb_password,
+        )
+
+        # Initialize turn buffer (batch ingestion)
+        self._turn_buffer = TurnBuffer(
+            batch_size=self._config.batch_size,
+            trivial_threshold=self._config.trivial_turn_threshold,
+        )
+
+        self._initialized = True
+        logger.info(f"Synapse initialized (session={session_id}, group={self._group_id})")
+
+    def _run_bg_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def system_prompt_block(self) -> str:
+        """Static info for the system prompt (optimized: 15 tokens)."""
+        return "Synapse memory active. Use synapse_query for past memories.\n"
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """Return cached context for the current query (zero blocking)."""
+        if not self._initialized or not self._retrieval:
+            return ""
+        return self._retrieval.prefetch(query)
+
+    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
+        """Run background search and cache result for next turn."""
+        if self._initialized and self._retrieval:
+            self._retrieval.queue_prefetch(query)
+
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Buffer a completed turn for batch episode ingestion."""
+        if not self._initialized or not self._turn_buffer:
+            return
+        # Optimization #1 + #5: buffer turns, skip trivial ones
+        self._turn_buffer.add(user_content, assistant_content)
+        # Flush if buffer is full
+        if self._turn_buffer.should_flush():
+            self._ingest_episode()
+
+    def _ingest_episode(self) -> None:
+        """Flush the turn buffer and ingest as a batch episode."""
+        if not self._turn_buffer or not self._graphiti or not self._loop:
+            return
+
+        episode = self._turn_buffer.flush()
+        if not episode:
+            return
+
+        def _bg_ingest():
+            try:
+                from graphiti_core.nodes import EpisodeType
+                future = asyncio.run_coroutine_threadsafe(
+                    self._graphiti.add_episode(
+                        name=episode["name"],
+                        episode_body=episode["body"],
+                        source_description="Hermes agent conversation",
+                        reference_time=episode["reference_time"],
+                        source=EpisodeType.message,
+                        group_id=self._group_id,
+                    ),
+                    self._loop,
+                )
+                future.result(timeout=120)
+            except Exception as e:
+                logger.warning(f"Synapse episode ingestion failed: {e}")
+
+        threading.Thread(target=_bg_ingest, daemon=True).start()
+
+    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+        """Return tool schemas (single merged tool)."""
+        from synapse.tools import get_tool_schema
+        return [get_tool_schema()]
+
+    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
+        """Handle synapse_query tool calls."""
+        if tool_name == "synapse_query" and self._retrieval:
+            from synapse.tools import handle_tool_call
+            return handle_tool_call(args, self._retrieval)
+        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+    def shutdown(self) -> None:
+        """Clean shutdown — flush remaining turns, close Graphiti."""
+        if self._turn_buffer and len(self._turn_buffer) > 0:
+            self._ingest_episode()
+
+        if self._graphiti and self._loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._graphiti.close(), self._loop
+                )
+                future.result(timeout=10)
+            except Exception:
+                pass
+
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+        self._initialized = False
+
+    # -- Optional hooks -----------------------------------------------------
+
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        """Flush remaining turns on session end."""
+        if self._turn_buffer and len(self._turn_buffer) > 0:
+            self._ingest_episode()
+
+    def on_memory_write(
+        self,
+        action: str,
+        target: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mirror built-in memory writes to the graph."""
+        if not self._initialized or not self._graphiti or not self._loop:
+            return
+
+        def _bg_write():
+            try:
+                from graphiti_core.nodes import EpisodeType
+                future = asyncio.run_coroutine_threadsafe(
+                    self._graphiti.add_episode(
+                        name=f"Memory: {action} {target}",
+                        episode_body=content,
+                        source_description=f"Hermes memory write ({action} on {target})",
+                        reference_time=datetime.now(timezone.utc),
+                        source=EpisodeType.message,
+                        group_id=self._group_id,
+                    ),
+                    self._loop,
+                )
+                future.result(timeout=30)
+            except Exception as e:
+                logger.debug(f"Synapse on_memory_write failed: {e}")
+
+        threading.Thread(target=_bg_write, daemon=True).start()
+
+    # -- Config --------------------------------------------------------------
+
+    def get_config_schema(self) -> List[Dict[str, Any]]:
+        """Config fields for 'hermes memory setup' wizard."""
+        return [
+            {"key": "falkordb_host", "description": "FalkorDB host", "required": True,
+             "env_var": "SYNAPSE_FALKORDB_HOST", "default": "localhost"},
+            {"key": "falkordb_port", "description": "FalkorDB port", "required": False,
+             "env_var": "SYNAPSE_FALKORDB_PORT", "default": "6379"},
+            {"key": "falkordb_password", "description": "FalkorDB password", "required": False,
+             "secret": True, "env_var": "SYNAPSE_FALKORDB_PASSWORD"},
+            {"key": "llm_api_key", "description": "LLM API key (OpenAI-compatible)",
+             "required": True, "secret": True, "env_var": "SYNAPSE_LLM_API_KEY"},
+            {"key": "llm_base_url", "description": "LLM base URL", "required": True,
+             "env_var": "SYNAPSE_LLM_BASE_URL"},
+            {"key": "llm_model", "description": "LLM model", "required": False,
+             "env_var": "SYNAPSE_LLM_MODEL", "default": "gpt-4o-mini"},
+            {"key": "embedding_model", "description": "Embedding model", "required": False,
+             "env_var": "SYNAPSE_EMBEDDING_MODEL", "default": "text-embedding-3-small"},
+            {"key": "batch_size", "description": "Turns per episode (optimization)",
+             "required": False, "env_var": "SYNAPSE_BATCH_SIZE", "default": "5"},
+            {"key": "half_life_days", "description": "Forgetting curve half-life in days",
+             "required": False, "env_var": "SYNAPSE_HALF_LIFE_DAYS", "default": "7.0"},
+        ]
+
+    def backup_paths(self) -> List[str]:
+        """No external paths — FalkorDB data is in Docker."""
+        return []
+
+
+def register(ctx):
+    """Register the Synapse memory provider (Hermes plugin entry point)."""
+    ctx.register_memory_provider(SynapseMemoryProvider())
