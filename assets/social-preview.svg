@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a1a"/>
+      <stop offset="50%" style="stop-color:#0f0f2e"/>
+      <stop offset="100%" style="stop-color:#0a0a1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a78bfa"/>
+      <stop offset="50%" style="stop-color:#22d3ee"/>
+      <stop offset="100%" style="stop-color:#34d399"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- Grid pattern -->
+  <g opacity="0.06">
+    <path d="M 0 0 L 1280 0 M 0 40 L 1280 40 M 0 80 L 1280 80 M 0 120 L 1280 120 M 0 160 L 1280 160 M 0 200 L 1280 200 M 0 240 L 1280 240 M 0 280 L 1280 280 M 0 320 L 1280 320 M 0 360 L 1280 360 M 0 400 L 1280 400 M 0 440 L 1280 440 M 0 480 L 1280 480 M 0 520 L 1280 520 M 0 560 L 1280 560 M 0 600 L 1280 600 M 0 640 L 1280 640" stroke="#a78bfa" stroke-width="0.5"/>
+    <path d="M 0 0 L 0 640 M 40 0 L 40 640 M 80 0 L 80 640 M 120 0 L 120 640 M 160 0 L 160 640 M 200 0 L 200 640 M 240 0 L 240 640 M 280 0 L 280 640 M 320 0 L 320 640 M 360 0 L 360 640 M 400 0 L 400 640 M 440 0 L 440 640 M 480 0 L 480 640 M 520 0 L 520 640 M 560 0 L 560 640 M 600 0 L 600 640 M 640 0 L 640 640 M 680 0 L 680 640 M 720 0 L 720 640 M 760 0 L 760 640 M 800 0 L 800 640 M 840 0 L 840 640 M 880 0 L 880 640 M 920 0 L 920 640 M 960 0 L 960 640 M 1000 0 L 1000 640 M 1040 0 L 1040 640 M 1080 0 L 1080 640 M 1120 0 L 1120 640 M 1160 0 L 1160 640 M 1200 0 L 1200 640 M 1240 0 L 1240 640 M 1280 0 L 1280 640" stroke="#a78bfa" stroke-width="0.5"/>
+  </g>
+
+  <!-- Decorative neural network lines -->
+  <g opacity="0.12">
+    <line x1="150" y1="520" x2="350" y2="380" stroke="#22d3ee" stroke-width="1"/>
+    <line x1="350" y1="380" x2="550" y2="450" stroke="#22d3ee" stroke-width="1"/>
+    <line x1="350" y1="380" x2="500" y2="180" stroke="#a78bfa" stroke-width="1"/>
+    <line x1="550" y1="450" x2="750" y2="320" stroke="#34d399" stroke-width="1"/>
+    <line x1="500" y1="180" x2="750" y2="320" stroke="#a78bfa" stroke-width="1"/>
+    <line x1="750" y1="320" x2="950" y2="200" stroke="#22d3ee" stroke-width="1"/>
+    <line x1="750" y1="320" x2="920" y2="480" stroke="#34d399" stroke-width="1"/>
+    <line x1="950" y1="200" x2="1100" y2="350" stroke="#a78bfa" stroke-width="1"/>
+    <line x1="920" y1="480" x2="1100" y2="350" stroke="#22d3ee" stroke-width="1"/>
+  </g>
+
+  <!-- Neural network nodes -->
+  <g filter="url(#glow)">
+    <circle cx="150" cy="520" r="5" fill="#22d3ee"/>
+    <circle cx="350" cy="380" r="6" fill="#22d3ee"/>
+    <circle cx="550" cy="450" r="5" fill="#34d399"/>
+    <circle cx="500" cy="180" r="5" fill="#a78bfa"/>
+    <circle cx="750" cy="320" r="7" fill="#22d3ee"/>
+    <circle cx="950" cy="200" r="5" fill="#a78bfa"/>
+    <circle cx="920" cy="480" r="5" fill="#34d399"/>
+    <circle cx="1100" cy="350" r="6" fill="#22d3ee"/>
+  </g>
+
+  <!-- Brain icon (stylized) -->
+  <g transform="translate(640, 180)" filter="url(#glow2)">
+    <!-- Brain outer shape -->
+    <path d="M -50 -30 Q -70 -30 -70 -10 Q -80 0 -70 20 Q -70 40 -50 40 Q -30 50 0 45 Q 30 50 50 40 Q 70 40 70 20 Q 80 0 70 -10 Q 70 -30 50 -30 Q 30 -40 0 -35 Q -30 -40 -50 -30 Z" 
+      fill="none" stroke="url(#accent)" stroke-width="2"/>
+    <!-- Brain center divider -->
+    <path d="M 0 -35 L 0 45" stroke="url(#accent)" stroke-width="1.5" opacity="0.6"/>
+    <!-- Brain folds -->
+    <path d="M -50 -15 Q -30 -10 -20 -20 M -50 5 Q -30 10 -20 0 M -50 25 Q -30 30 -20 20" 
+      fill="none" stroke="#a78bfa" stroke-width="1" opacity="0.4"/>
+    <path d="M 50 -15 Q 30 -10 20 -20 M 50 5 Q 30 10 20 0 M 50 25 Q 30 30 20 20" 
+      fill="none" stroke="#22d3ee" stroke-width="1" opacity="0.4"/>
+  </g>
+
+  <!-- Logo text -->
+  <text x="640" y="280" text-anchor="middle" font-family="monospace" font-size="48" font-weight="bold" fill="url(#accent)" filter="url(#glow)">SYNAPSE</text>
+
+  <!-- Tagline -->
+  <text x="640" y="320" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#e2e8f0" opacity="0.9">A synthetic hippocampus for AI agents</text>
+
+  <!-- Feature pills -->
+  <g transform="translate(640, 380)">
+    <!-- Pill 1 -->
+    <rect x="-300" y="0" width="140" height="32" rx="16" fill="rgba(34, 211, 238, 0.1)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="-230" y="21" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#22d3ee">🕐 Temporal</text>
+
+    <!-- Pill 2 -->
+    <rect x="-150" y="0" width="140" height="32" rx="16" fill="rgba(52, 211, 153, 0.1)" stroke="#34d399" stroke-width="1"/>
+    <text x="-80" y="21" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#34d399">🔒 Self-hosted</text>
+
+    <!-- Pill 3 -->
+    <rect x="10" y="0" width="140" height="32" rx="16" fill="rgba(167, 139, 250, 0.1)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="80" y="21" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#a78bfa">🧠 Biological</text>
+
+    <!-- Pill 4 -->
+    <rect x="160" y="0" width="140" height="32" rx="16" fill="rgba(251, 191, 36, 0.1)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="230" y="21" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#fbbf24">⚡ Optimized</text>
+  </g>
+
+  <!-- Tech stack -->
+  <text x="640" y="460" text-anchor="middle" font-family="monospace" font-size="16" fill="#94a3b8">Graphiti × FalkorDB × Hermes Agent</text>
+
+  <!-- GitHub link -->
+  <text x="640" y="500" text-anchor="middle" font-family="monospace" font-size="18" fill="url(#accent)">github.com/ardhaecosystem/synapse</text>
+
+  <!-- Ardha Studios branding -->
+  <text x="640" y="580" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#64748b">Built by Ardha Studios · MIT License</text>
+
+  <!-- Decorative accent line -->
+  <rect x="490" y="600" width="300" height="2" rx="1" fill="url(#accent)" opacity="0.5"/>
+</svg>
