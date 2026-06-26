@@ -36,7 +36,7 @@ Synapse gives AI agents a **biologically-inspired memory system** — a temporal
 - **🔒 Self-hosted** — Your conversations stay on your machine. FalkorDB in Docker. Zero cloud dependency.
 - **🧠 Biological** — Important memories persist. Unimportant ones fade. Mistakes are remembered vividly. Just like you.
 - **🔌 Provider-agnostic** — Works with any OpenAI-compatible LLM. OpenRouter, Ollama, vLLM, OpenAI — your choice.
-- **⚡ Optimized** — 73% cheaper, 70x faster prefetch, 86% fewer LLM calls than naive implementations. Zero blocking latency.
+- **⚡ Optimized** — Projected 73% cheaper, 70x faster prefetch, 86% fewer LLM calls than naive implementations. Zero blocking latency. ([See methodology](docs/benchmarks.md))
 
 > *Built on [Graphiti](https://github.com/getzep/graphiti) + [FalkorDB](https://www.falkordb.com/). Ships as a [Hermes Agent](https://hermes-agent.nousresearch.com) memory provider plugin — drops in with zero core changes.*
 
@@ -180,6 +180,8 @@ The agent gets:
 
 ## Performance
 
+> **Projected** estimates based on architectural analysis. See the [benchmark methodology](docs/benchmarks.md) for calculations, assumptions, and reproduction steps.
+
 | Metric | Naive Implementation | Synapse (Optimized) | Improvement |
 |--------|-----------------------|-----------------------|-------------|
 | Cost per 100 turns | $0.0705 | $0.0192 | **73% reduction** |
@@ -243,6 +245,7 @@ All configuration via environment variables with the `SYNAPSE_` prefix:
 | **[Architecture](docs/architecture.md)** | System design, data flow, optimization details |
 | **[Configuration](docs/configuration.md)** | All env vars, LLM providers, tuning guide |
 | **[Hippocampus Layer](docs/hippocampus.md)** | Algorithm formulas, biological references |
+| **[Benchmarks](docs/benchmarks.md)** | Performance methodology, calculations, assumptions |
 
 ---
 
