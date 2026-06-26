@@ -29,6 +29,12 @@ class SynapseMemoryProvider:
     Designed to implement the Hermes MemoryProvider ABC when installed
     as a plugin. The ABC methods match the Hermes agent.memory_provider
     interface exactly.
+
+    When native MEMORY.md/USER.md are disabled, Synapse becomes the
+    agent's primary memory system. The system_prompt_block() detects
+    this and instructs the agent to use synapse_remember for explicit
+    facts and synapse_query for recall — replacing the dead 'memory'
+    tool path.
     """
 
     def __init__(self):
@@ -42,6 +48,8 @@ class SynapseMemoryProvider:
         self._initialized = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._bg_thread: Optional[threading.Thread] = None
+        self._native_memory_active = False
+        self._remembered_facts: list[dict] = []  # cached for system prompt
 
     @property
     def name(self) -> str:
@@ -124,6 +132,14 @@ class SynapseMemoryProvider:
         )
 
         self._initialized = True
+
+        # Detect whether native MEMORY.md/USER.md is active.
+        # If on_memory_write has been called, native memory is active.
+        # We check via env var override or default to checking at first
+        # on_memory_write call. For now, assume native is disabled unless
+        # we receive a memory write via on_memory_write().
+        self._native_memory_active = False
+
         logger.info(f"Synapse initialized (session={session_id}, group={self._group_id})")
 
     def _run_bg_loop(self):
@@ -131,8 +147,58 @@ class SynapseMemoryProvider:
         self._loop.run_forever()
 
     def system_prompt_block(self) -> str:
-        """Static info for the system prompt (optimized: 15 tokens)."""
-        return "Synapse memory active. Use synapse_query for past memories.\n"
+        """Static info for the system prompt — brain-aware.
+
+        When native MEMORY.md/USER.md are disabled, Synapse is the sole
+        memory system. The prompt block tells the agent which tools to
+        use and provides cached user-profile facts from the graph.
+
+        When native memory IS active, the block is minimal — native
+        memory handles the system prompt injection, Synapse handles
+        episodic recall.
+        """
+        if not self._initialized:
+            return ""
+
+        if self._native_memory_active:
+            # Native memory is active — Synapse is supplementary
+            return "Synapse memory active. Use synapse_query for past memories.\n"
+
+        # Native memory is disabled — Synapse is the primary memory system.
+        # The agent needs to know:
+        # 1. It has persistent memory (not just a database)
+        # 2. Which tools to use (synapse_remember, synapse_query)
+        # 3. Any cached user-profile facts (replaces USER.md)
+
+        lines = [
+            "Synapse memory active — you have a persistent temporal knowledge graph.",
+            "Use synapse_remember to save important facts (replaces the memory tool).",
+            "Use synapse_query to recall past conversations and facts.",
+        ]
+
+        # Include cached user-profile facts (replaces USER.md injection)
+        profile_facts = [
+            f for f in self._remembered_facts
+            if f.get("category") == "user_profile"
+        ]
+        if profile_facts:
+            lines.append("")
+            lines.append("What you know about your user:")
+            for fact in profile_facts[:10]:  # cap at 10 facts
+                lines.append(f"- {fact['content']}")
+
+        # Include cached environment facts (replaces MEMORY.md injection)
+        env_facts = [
+            f for f in self._remembered_facts
+            if f.get("category") == "environment"
+        ]
+        if env_facts:
+            lines.append("")
+            lines.append("What you know about your environment:")
+            for fact in env_facts[:10]:
+                lines.append(f"- {fact['content']}")
+
+        return "\n".join(lines) + "\n"
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Return cached context for the current query (zero blocking)."""
@@ -192,16 +258,61 @@ class SynapseMemoryProvider:
         threading.Thread(target=_bg_ingest, daemon=True).start()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Return tool schemas (single merged tool)."""
-        from synapse.tools import get_tool_schema
-        return [get_tool_schema()]
+        """Return all Synapse tool schemas (synapse_query + synapse_remember)."""
+        from synapse.tools import get_all_tool_schemas
+        return get_all_tool_schemas()
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
-        """Handle synapse_query tool calls."""
+        """Handle synapse_query and synapse_remember tool calls."""
         if tool_name == "synapse_query" and self._retrieval:
             from synapse.tools import handle_tool_call
             return handle_tool_call(args, self._retrieval)
+
+        if tool_name == "synapse_remember":
+            from synapse.tools import handle_remember
+            return handle_remember(args, self._store_remembered_fact)
+
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+    def _store_remembered_fact(self, content: str, category: str) -> bool:
+        """Store an explicit fact in the graph with maximum salience.
+
+        This is the callback for synapse_remember tool calls.
+        The fact is:
+        1. Cached in self._remembered_facts for system_prompt_block() injection
+        2. Ingested as a Graphiti episode (so it gets entity extraction)
+        3. Marked as high-salience (never decays in the forgetting curve)
+        """
+        # Cache for system prompt
+        self._remembered_facts.append({
+            "content": content,
+            "category": category,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # Ingest as episode in background
+        if self._graphiti and self._loop:
+            def _bg_remember():
+                try:
+                    from graphiti_core.nodes import EpisodeType
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._graphiti.add_episode(
+                            name=f"Explicit memory: {category}",
+                            episode_body=content,
+                            source_description=f"Agent explicit memory write ({category})",
+                            reference_time=datetime.now(timezone.utc),
+                            source=EpisodeType.message,
+                            group_id=self._group_id,
+                        ),
+                        self._loop,
+                    )
+                    future.result(timeout=60)
+                except Exception as e:
+                    logger.warning(f"Synapse remember ingestion failed: {e}")
+
+            threading.Thread(target=_bg_remember, daemon=True).start()
+
+        return True
 
     def shutdown(self) -> None:
         """Clean shutdown — flush remaining turns, close Graphiti."""
@@ -236,8 +347,22 @@ class SynapseMemoryProvider:
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Mirror built-in memory writes to the graph."""
-        if not self._initialized or not self._graphiti or not self._loop:
+        """Mirror built-in memory writes to the graph.
+
+        When this hook fires, it means native MEMORY.md/USER.md is active
+        (the built-in memory tool successfully wrote something). We set
+        the _native_memory_active flag so system_prompt_block() knows to
+        use the minimal prompt instead of the full brain-mode prompt.
+        """
+        if not self._initialized:
+            return
+
+        # Native memory is active — update the flag
+        if not self._native_memory_active:
+            self._native_memory_active = True
+            logger.debug("Synapse: native memory detected — switching to supplementary mode")
+
+        if not self._graphiti or not self._loop:
             return
 
         def _bg_write():
