@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: synapse-falkordb
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/var/lib/falkordb
+    restart: unless-stopped
+
+volumes:
+  falkordb-data:

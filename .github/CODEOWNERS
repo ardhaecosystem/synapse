@@ -1,0 +1,11 @@
+# These owners will be automatically requested as reviewers on PRs
+*       @ardhaecosystem
+
+# Source code
+/src/           @ardhaecosystem
+
+# Documentation
+/docs/          @ardhaecosystem
+
+# CI/CD
+/.github/       @ardhaecosystem
