@@ -10,7 +10,6 @@ def test_query_with_pattern_completion():
     p = SynapseMemoryProvider()
     p._initialized = True
 
-    # Mock retrieval engine
     class MockRetrieval:
         def search(self, query, limit=5):
             return [
@@ -23,12 +22,11 @@ def test_query_with_pattern_completion():
 
     p._retrieval = MockRetrieval()
 
-    # Mock hippocampus
     class MockHippocampus:
         def __init__(self):
             self.recalled = []
 
-        def on_recall(self, entities):
+        def on_recall(self, entities, edges=None):
             self.recalled.extend(entities)
 
         def expand_recall(self, query, edges):
@@ -42,17 +40,17 @@ def test_query_with_pattern_completion():
                 "depth": 1,
             }
 
+        def get_rif_penalty(self, entity):
+            return 0.0
+
     p._hippocampus = MockHippocampus()
 
-    # Mock config to avoid None access
     class MockConfig:
         falkordb_host = "localhost"
         falkordb_port = 6379
         falkordb_password = None
-    p._config = MockConfig()
 
-    # Patch FalkorHelper to avoid real connection
-    import synapse.provider as prov_mod
+    p._config = MockConfig()
 
     class MockFalkorHelper:
         def __init__(self, **kwargs):
@@ -65,8 +63,6 @@ def test_query_with_pattern_completion():
                  "invalid_at": None},
             ]
 
-    getattr(prov_mod, "FalkorHelper", None)
-    # Monkey-patch the import inside handle_tool_call
     import synapse.falkor as falkor_mod
     original_get = falkor_mod.FalkorHelper
     falkor_mod.FalkorHelper = MockFalkorHelper
@@ -78,15 +74,12 @@ def test_query_with_pattern_completion():
     finally:
         falkor_mod.FalkorHelper = original_get
 
-    # Should have original BM25 result + expanded fact
     assert len(result["results"]) >= 1
     facts = [r.get("fact", "") for r in result["results"]]
     assert "A uses B" in facts
-    # Pattern completion should have added the neighborhood fact
     assert "pattern_completion" in result
     assert "B runs in Docker" in facts
 
-    # Reconsolidation should have been called
     assert "A" in p._hippocampus.recalled
     assert "B" in p._hippocampus.recalled
 
@@ -109,11 +102,14 @@ def test_query_pattern_completion_no_entities():
         def __init__(self):
             self.recalled = []
 
-        def on_recall(self, entities):
+        def on_recall(self, entities, edges=None):
             self.recalled.extend(entities)
 
         def expand_recall(self, query, edges):
             return {"facts": [], "entities": [], "depth": 0}
+
+        def get_rif_penalty(self, entity):
+            return 0.0
 
     p._hippocampus = MockHippocampus()
 
