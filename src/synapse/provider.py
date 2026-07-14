@@ -9,6 +9,8 @@ Optimizations baked in:
 - Trivial turn skipping (<10 chars)
 - Configurable half-life
 - Hippocampus coordinator wired into episode ingestion + recall
+- Bounded graph fetch (get_recent_edges) for post-episode processing
+- Pattern completion (CA3 BFS) wired into synapse_query results
 """
 
 from __future__ import annotations
@@ -244,8 +246,8 @@ class SynapseMemoryProvider:
                 future.result(timeout=120)
 
                 # Run hippocampus algorithms on the ingested episode.
-                # ponytail: full-graph fetch here is O(edges) — fine at alpha
-                # scale. Phase 3 will add bounded fetch (N-hop neighborhood).
+                # Bounded fetch: only the 50 most recent edges + all entity
+                # names. Full graph fetch was O(edges) — this is O(limit).
                 if self._hippocampus:
                     from synapse.falkor import FalkorHelper
                     helper = FalkorHelper(
@@ -253,20 +255,17 @@ class SynapseMemoryProvider:
                         port=self._config.falkordb_port,
                         password=self._config.falkordb_password,
                     )
-                    existing_edges = helper.get_edges(self._group_id)
+                    recent_edges = helper.get_recent_edges(
+                        self._group_id, limit=50
+                    )
                     existing_entities = [
                         e.get("name", "") for e in helper.get_entities(self._group_id)
                     ]
-                    # New edges/entities are whatever Graphiti just extracted —
-                    # we don't get them back from add_episode, so pass empty lists.
-                    # The hippocampus still runs salience + reconsolidation on
-                    # existing state. Full wiring requires post-ingest extraction
-                    # (Phase 3 with bounded fetch).
                     self._hippocampus.on_episode_ingested(
                         new_entities=[],
                         existing_entities=existing_entities,
                         new_edges=[],
-                        existing_edges=existing_edges,
+                        existing_edges=recent_edges,
                     )
             except Exception as e:
                 logger.warning(f"Synapse episode ingestion failed: {e}")
@@ -297,17 +296,49 @@ class SynapseMemoryProvider:
         if tool_name == "synapse_query" and self._retrieval:
             from synapse.tools import handle_tool_call
             result = handle_tool_call(args, self._retrieval)
-            # Feed recalled entities into reconsolidation tracker
+            # Feed recalled entities into reconsolidation tracker + pattern completion
             if self._hippocampus:
                 try:
                     result_dict = json.loads(result)
+                    bm25_results = result_dict.get("results", [])
                     entities = set()
-                    for r in result_dict.get("results", []):
+                    for r in bm25_results:
                         entities.add(r.get("from_node", ""))
                         entities.add(r.get("to_node", ""))
                     entities.discard("")
+
+                    # Pattern completion: expand BM25 results into neighborhood
+                    if entities and self._hippocampus:
+                        from synapse.falkor import FalkorHelper
+                        helper = FalkorHelper(
+                            host=self._config.falkordb_host,
+                            port=self._config.falkordb_port,
+                            password=self._config.falkordb_password,
+                        )
+                        neighborhood_edges = helper.get_entity_neighborhood(
+                            self._group_id, list(entities), depth=1, limit=20
+                        )
+                        if neighborhood_edges:
+                            expanded = self._hippocampus.expand_recall(
+                                args.get("query", ""), neighborhood_edges
+                            )
+                            # Merge expanded facts into results
+                            expanded_facts = expanded.get("facts", [])
+                            existing_facts = {r.get("fact", "") for r in bm25_results}
+                            for ef in expanded_facts:
+                                fact = ef.get("fact", "")
+                                if fact and fact not in existing_facts:
+                                    bm25_results.append(ef)
+                                    existing_facts.add(fact)
+                            result_dict["results"] = bm25_results[:20]
+                            result_dict["pattern_completion"] = {
+                                "expanded_entities": expanded.get("entities", []),
+                                "depth": expanded.get("depth", 0),
+                            }
+
                     if entities:
                         self._hippocampus.on_recall(list(entities))
+                    result = json.dumps(result_dict)
                 except Exception:
                     pass
             return result
