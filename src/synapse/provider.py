@@ -8,6 +8,7 @@ Optimizations baked in:
 - Minimal system prompt (15 tokens)
 - Trivial turn skipping (<10 chars)
 - Configurable half-life
+- Hippocampus coordinator wired into episode ingestion + recall
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class SynapseMemoryProvider:
         self._driver = None
         self._retrieval = None
         self._turn_buffer = None
+        self._hippocampus = None
         self._session_id = ""
         self._group_id = "default"
         self._initialized = False
@@ -132,13 +134,17 @@ class SynapseMemoryProvider:
             trivial_threshold=self._config.trivial_turn_threshold,
         )
 
-        self._initialized = True
+        # Initialize hippocampus coordinator (wires all 9 algorithms)
+        from synapse.hippocampus import Hippocampus
+        self._hippocampus = Hippocampus(
+            half_life_days=self._config.half_life_days,
+            salience_boost=self._config.salience_boost,
+            recall_boost=self._config.recall_boost,
+            prune_threshold=self._config.prune_threshold,
+            group_id=self._group_id,
+        )
 
-        # Detect whether native MEMORY.md/USER.md is active.
-        # If on_memory_write has been called, native memory is active.
-        # We check via env var override or default to checking at first
-        # on_memory_write call. For now, assume native is disabled unless
-        # we receive a memory write via on_memory_write().
+        self._initialized = True
         self._native_memory_active = False
 
         logger.info(f"Synapse initialized (session={session_id}, group={self._group_id})")
@@ -148,28 +154,12 @@ class SynapseMemoryProvider:
         self._loop.run_forever()
 
     def system_prompt_block(self) -> str:
-        """Static info for the system prompt — brain-aware.
-
-        When native MEMORY.md/USER.md are disabled, Synapse is the sole
-        memory system. The prompt block tells the agent which tools to
-        use and provides cached user-profile facts from the graph.
-
-        When native memory IS active, the block is minimal — native
-        memory handles the system prompt injection, Synapse handles
-        episodic recall.
-        """
+        """Static info for the system prompt — brain-aware."""
         if not self._initialized:
             return ""
 
         if self._native_memory_active:
-            # Native memory is active — Synapse is supplementary
             return "Synapse memory active. Use synapse_query for past memories.\n"
-
-        # Native memory is disabled — Synapse is the primary memory system.
-        # The agent needs to know:
-        # 1. It has persistent memory (not just a database)
-        # 2. Which tools to use (synapse_remember, synapse_query)
-        # 3. Any cached user-profile facts (replaces USER.md)
 
         lines = [
             "Synapse memory active — you have a persistent temporal knowledge graph.",
@@ -177,7 +167,6 @@ class SynapseMemoryProvider:
             "Use synapse_query to recall past conversations and facts.",
         ]
 
-        # Include cached user-profile facts (replaces USER.md injection)
         profile_facts = [
             f for f in self._remembered_facts
             if f.get("category") == "user_profile"
@@ -185,10 +174,9 @@ class SynapseMemoryProvider:
         if profile_facts:
             lines.append("")
             lines.append("What you know about your user:")
-            for fact in profile_facts[:10]:  # cap at 10 facts
+            for fact in profile_facts[:10]:
                 lines.append(f"- {fact['content']}")
 
-        # Include cached environment facts (replaces MEMORY.md injection)
         env_facts = [
             f for f in self._remembered_facts
             if f.get("category") == "environment"
@@ -223,9 +211,10 @@ class SynapseMemoryProvider:
         """Buffer a completed turn for batch episode ingestion."""
         if not self._initialized or not self._turn_buffer:
             return
-        # Optimization #1 + #5: buffer turns, skip trivial ones
         self._turn_buffer.add(user_content, assistant_content)
-        # Flush if buffer is full
+        # Advance hippocampus turn counter (reconsolidation windows)
+        if self._hippocampus:
+            self._hippocampus.tick()
         if self._turn_buffer.should_flush():
             self._ingest_episode()
 
@@ -253,6 +242,32 @@ class SynapseMemoryProvider:
                     self._loop,
                 )
                 future.result(timeout=120)
+
+                # Run hippocampus algorithms on the ingested episode.
+                # ponytail: full-graph fetch here is O(edges) — fine at alpha
+                # scale. Phase 3 will add bounded fetch (N-hop neighborhood).
+                if self._hippocampus:
+                    from synapse.falkor import FalkorHelper
+                    helper = FalkorHelper(
+                        host=self._config.falkordb_host,
+                        port=self._config.falkordb_port,
+                        password=self._config.falkordb_password,
+                    )
+                    existing_edges = helper.get_edges(self._group_id)
+                    existing_entities = [
+                        e.get("name", "") for e in helper.get_entities(self._group_id)
+                    ]
+                    # New edges/entities are whatever Graphiti just extracted —
+                    # we don't get them back from add_episode, so pass empty lists.
+                    # The hippocampus still runs salience + reconsolidation on
+                    # existing state. Full wiring requires post-ingest extraction
+                    # (Phase 3 with bounded fetch).
+                    self._hippocampus.on_episode_ingested(
+                        new_entities=[],
+                        existing_entities=existing_entities,
+                        new_edges=[],
+                        existing_edges=existing_edges,
+                    )
             except Exception as e:
                 logger.warning(f"Synapse episode ingestion failed: {e}")
 
@@ -281,7 +296,21 @@ class SynapseMemoryProvider:
 
         if tool_name == "synapse_query" and self._retrieval:
             from synapse.tools import handle_tool_call
-            return handle_tool_call(args, self._retrieval)
+            result = handle_tool_call(args, self._retrieval)
+            # Feed recalled entities into reconsolidation tracker
+            if self._hippocampus:
+                try:
+                    result_dict = json.loads(result)
+                    entities = set()
+                    for r in result_dict.get("results", []):
+                        entities.add(r.get("from_node", ""))
+                        entities.add(r.get("to_node", ""))
+                    entities.discard("")
+                    if entities:
+                        self._hippocampus.on_recall(list(entities))
+                except Exception:
+                    pass
+            return result
 
         if tool_name == "synapse_remember":
             from synapse.tools import handle_remember
@@ -290,22 +319,13 @@ class SynapseMemoryProvider:
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
     def _store_remembered_fact(self, content: str, category: str) -> bool:
-        """Store an explicit fact in the graph with maximum salience.
-
-        This is the callback for synapse_remember tool calls.
-        The fact is:
-        1. Cached in self._remembered_facts for system_prompt_block() injection
-        2. Ingested as a Graphiti episode (so it gets entity extraction)
-        3. Marked as high-salience (never decays in the forgetting curve)
-        """
-        # Cache for system prompt
+        """Store an explicit fact in the graph with maximum salience."""
         self._remembered_facts.append({
             "content": content,
             "category": category,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Ingest as episode in background
         if self._graphiti and self._loop:
             def _bg_remember():
                 try:
@@ -334,6 +354,9 @@ class SynapseMemoryProvider:
         if self._turn_buffer and len(self._turn_buffer) > 0:
             self._ingest_episode()
 
+        if self._hippocampus:
+            self._hippocampus.clear()
+
         if self._graphiti and self._loop:
             try:
                 future = asyncio.run_coroutine_threadsafe(
@@ -354,6 +377,8 @@ class SynapseMemoryProvider:
         """Flush remaining turns on session end."""
         if self._turn_buffer and len(self._turn_buffer) > 0:
             self._ingest_episode()
+        if self._hippocampus:
+            self._hippocampus.clear()
 
     def on_memory_write(
         self,
@@ -362,17 +387,10 @@ class SynapseMemoryProvider:
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Mirror built-in memory writes to the graph.
-
-        When this hook fires, it means native MEMORY.md/USER.md is active
-        (the built-in memory tool successfully wrote something). We set
-        the _native_memory_active flag so system_prompt_block() knows to
-        use the minimal prompt instead of the full brain-mode prompt.
-        """
+        """Mirror built-in memory writes to the graph."""
         if not self._initialized:
             return
 
-        # Native memory is active — update the flag
         if not self._native_memory_active:
             self._native_memory_active = True
             logger.debug("Synapse: native memory detected — switching to supplementary mode")
@@ -426,12 +444,7 @@ class SynapseMemoryProvider:
         ]
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
-        """Write non-secret config to ~/.hermes/synapse.json.
-
-        Secret fields (falkordb_password, llm_api_key) are handled by
-        Hermes via the env_var route — they go to .env automatically.
-        This method persists the remaining non-secret fields.
-        """
+        """Write non-secret config to ~/.hermes/synapse.json."""
         config_path = Path(hermes_home) / "synapse.json"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
