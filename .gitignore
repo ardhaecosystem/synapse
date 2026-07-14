@@ -29,3 +29,6 @@ Thumbs.db
 
 # FalkorDB
 falkordb-data/
+
+# Graphify (regenerated locally, not needed in repo)
+graphify-out/
