@@ -124,6 +124,75 @@ class FalkorHelper:
             for row in result.result_set
         ]
 
+    def get_recent_edges(self, group_id: str, limit: int = 50) -> list[dict]:
+        """Get the N most recent edges (by valid_at, descending).
+
+        Bounded fetch for post-episode hippocampus processing — avoids
+        pulling the entire graph on every episode ingestion.
+
+        Args:
+            group_id: The graph group identifier.
+            limit: Maximum edges to return (default: 50).
+
+        Returns:
+            List of edge dicts, most recent first.
+        """
+        graph = self.get_graph(group_id)
+        result = graph.query(
+            "MATCH (a)-[r:RELATES_TO]->(b) "
+            "WHERE r.valid_at IS NOT NULL "
+            "RETURN a.name AS from_node, r.fact AS fact, b.name AS to_node, "
+            "r.uuid AS uuid, r.valid_at AS valid_at, r.invalid_at AS invalid_at "
+            f"ORDER BY r.valid_at DESC LIMIT {limit}"
+        )
+        if not result or not result.result_set:
+            return []
+        header = [h[1] for h in result.header]
+        return [
+            {header[i]: row[i] for i in range(min(len(header), len(row)))}
+            for row in result.result_set
+        ]
+
+    def get_entity_neighborhood(
+        self, group_id: str, entity_names: list[str], depth: int = 1, limit: int = 20
+    ) -> list[dict]:
+        """Get edges in the N-hop neighborhood of specific entities.
+
+        Used by pattern completion to expand BM25 search results into
+        a fuller context subgraph without fetching the entire graph.
+
+        Args:
+            group_id: The graph group identifier.
+            entity_names: Seed entities to expand from.
+            depth: Max hop distance (default: 1 — direct neighbors only).
+            limit: Maximum edges to return.
+
+        Returns:
+            List of edge dicts involving the neighborhood.
+        """
+        if not entity_names:
+            return []
+        graph = self.get_graph(group_id)
+        # ponytail: single-hop query with IN clause. Multi-hop would need
+        # APOC or recursive Cypher — overkill for alpha. Add when depth > 1
+        # is actually needed.
+        names_str = ", ".join(f"'{n}'" for n in entity_names[:20])  # cap at 20
+        result = graph.query(
+            f"MATCH (a)-[r:RELATES_TO]->(b) "
+            f"WHERE (a.name IN [{names_str}] OR b.name IN [{names_str}]) "
+            f"AND r.invalid_at IS NULL "
+            f"RETURN a.name AS from_node, r.fact AS fact, b.name AS to_node, "
+            f"r.valid_at AS valid_at, r.invalid_at AS invalid_at "
+            f"LIMIT {limit}"
+        )
+        if not result or not result.result_set:
+            return []
+        header = [h[1] for h in result.header]
+        return [
+            {header[i]: row[i] for i in range(min(len(header), len(row)))}
+            for row in result.result_set
+        ]
+
     def close(self):
         """Close the connection."""
         # falkordb client doesn't have explicit close
