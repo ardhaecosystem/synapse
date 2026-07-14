@@ -79,9 +79,51 @@ def test_tool_schemas_include_both_tools():
     assert len(schemas) == 2
 
 
+def test_tool_schemas_available_before_initialize():
+    """get_tool_schemas() must return schemas before initialize() is called.
+
+    Hermes calls get_tool_schemas() at registration time, before
+    initialize(). Schemas are static constants and must not depend
+    on instance state. (Issue #16)
+    """
+    p = SynapseMemoryProvider()
+    assert not p._initialized
+    schemas = p.get_tool_schemas()
+    assert len(schemas) == 2
+    names = [s["name"] for s in schemas]
+    assert "synapse_query" in names
+    assert "synapse_remember" in names
+
+
+def test_handle_tool_call_before_init_returns_error():
+    """handle_tool_call before initialize() should return a clear error.
+
+    Should NOT return 'Unknown tool' — the tool name is valid, just not
+    ready yet. (Issue #16)
+    """
+    p = SynapseMemoryProvider()
+    assert not p._initialized
+
+    # synapse_query before init
+    result = json.loads(p.handle_tool_call("synapse_query", {"query": "test"}))
+    assert "error" in result
+    assert "not initialized" in result["error"]
+    assert "Unknown tool" not in result["error"]
+
+    # synapse_remember before init
+    result = json.loads(p.handle_tool_call(
+        "synapse_remember",
+        {"content": "test fact", "category": "general"},
+    ))
+    assert "error" in result
+    assert "not initialized" in result["error"]
+    assert "Unknown tool" not in result["error"]
+
+
 def test_handle_remember_via_provider():
     """Provider should route synapse_remember to _store_remembered_fact."""
     p = SynapseMemoryProvider()
+    p._initialized = True
     result = json.loads(p.handle_tool_call(
         "synapse_remember",
         {"content": "User likes dark mode", "category": "user_profile"},
@@ -134,3 +176,28 @@ def test_backup_paths_empty():
     """FalkorDB data is in Docker — no external paths to declare."""
     p = SynapseMemoryProvider()
     assert p.backup_paths() == []
+
+
+def test_save_config_writes_non_secret_fields(tmp_path):
+    """save_config should write non-secret fields to synapse.json."""
+    p = SynapseMemoryProvider()
+    p.save_config(
+        {
+            "falkordb_host": "localhost",
+            "falkordb_port": 6379,
+            "llm_api_key": "secret-key",
+            "falkordb_password": "secret-pw",
+            "llm_model": "gpt-4o-mini",
+        },
+        hermes_home=str(tmp_path),
+    )
+    config_path = tmp_path / "synapse.json"
+    assert config_path.exists()
+    data = json.loads(config_path.read_text())
+    # Non-secret fields are persisted
+    assert data["falkordb_host"] == "localhost"
+    assert data["falkordb_port"] == 6379
+    assert data["llm_model"] == "gpt-4o-mini"
+    # Secret fields are NOT written to the JSON file
+    assert "llm_api_key" not in data
+    assert "falkordb_password" not in data

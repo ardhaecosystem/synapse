@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -258,12 +259,26 @@ class SynapseMemoryProvider:
         threading.Thread(target=_bg_ingest, daemon=True).start()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Return all Synapse tool schemas (synapse_query + synapse_remember)."""
+        """Return all Synapse tool schemas (synapse_query + synapse_remember).
+
+        Tool schemas are static module-level constants in tools.py — they
+        do not depend on Graphiti/FalkorDB being initialized. Hermes calls
+        this method at registration time, before initialize(), so we must
+        return schemas unconditionally.
+        """
         from synapse.tools import get_all_tool_schemas
         return get_all_tool_schemas()
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         """Handle synapse_query and synapse_remember tool calls."""
+        if not self._initialized:
+            return json.dumps({
+                "error": (
+                    f"Cannot handle '{tool_name}' — Synapse is not initialized. "
+                    "Ensure FalkorDB is running and SYNAPSE_* env vars are set."
+                ),
+            })
+
         if tool_name == "synapse_query" and self._retrieval:
             from synapse.tools import handle_tool_call
             return handle_tool_call(args, self._retrieval)
@@ -409,6 +424,22 @@ class SynapseMemoryProvider:
             {"key": "half_life_days", "description": "Forgetting curve half-life in days",
              "required": False, "env_var": "SYNAPSE_HALF_LIFE_DAYS", "default": "7.0"},
         ]
+
+    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+        """Write non-secret config to ~/.hermes/synapse.json.
+
+        Secret fields (falkordb_password, llm_api_key) are handled by
+        Hermes via the env_var route — they go to .env automatically.
+        This method persists the remaining non-secret fields.
+        """
+        config_path = Path(hermes_home) / "synapse.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        non_secret = {
+            k: v for k, v in values.items()
+            if k not in ("falkordb_password", "llm_api_key")
+        }
+        config_path.write_text(json.dumps(non_secret, indent=2))
 
     def backup_paths(self) -> List[str]:
         """No external paths — FalkorDB data is in Docker."""

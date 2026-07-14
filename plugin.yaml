@@ -5,3 +5,6 @@ pip_dependencies:
   - graphiti-core[falkordb]
 requires_env:
   - SYNAPSE_FALKORDB_HOST
+hooks:
+  - on_session_end
+  - on_memory_write
