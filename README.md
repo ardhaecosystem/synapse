@@ -68,8 +68,8 @@ Your agent now has a memory that:
 - ✅ Scores memory importance (salience + forgetting curve)
 - ✅ Tracks recall events for spaced repetition (reconsolidation)
 - ✅ Detects novelty and contradictions in new episodes (prediction error)
+- ✅ Consolidates memories in the background like sleep replay (`scripts/consolidate.py` via Hermes cron)
 - ✅ Lets the agent explicitly save facts worth remembering forever
-- ⏳ Consolidates memories in the background like sleep replay *(Phase 2 — scheduler pending)*
 
 ---
 
@@ -138,7 +138,7 @@ This is the novel contribution. Nine algorithms inspired by biological memory �
 │              │    window opens  │                          │
 │              └─────────────────┘                          │
 │                                                           │
-│  Background ("sleep") — Phase 2:                          │
+│  Background ("sleep") — via scripts/consolidate.py:        │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │ Schema Extraction → "User works on AI projects"      │  │
 │  │ Forgetting Curve → prunes forgotten memories         │  │
@@ -313,6 +313,9 @@ src/synapse/
     ├── schema_extraction.py   Neocortex — CLS slow learning
     ├── pattern_separation.py  DG — Jaccard fingerprint comparison
     └── cognitive_map.py       Grid/place cells — graph navigation
+
+scripts/
+└── consolidate.py            Offline consolidation batch (sleep replay)
 ```
 
 ---
@@ -346,18 +349,18 @@ The hippocampus layer is grounded in neuroscience research:
 - [x] Batch episode ingestion
 - [x] Salience scoring + reconsolidation tracking on every episode
 - [x] Prediction error detection on every episode
+- [x] Consolidation script (`scripts/consolidate.py` — sleep replay via Hermes cron)
 - [x] Pre-init tool call guard (Issue #16)
 
 ### In Progress
 
-- [ ] Consolidation scheduler (CLI/cron hook — "sleep replay" cycle)
 - [ ] Bounded graph fetch for post-episode hippocampus processing
 - [ ] Pattern completion wired into prefetch (CA3 subgraph expansion)
 - [ ] Retrieval-induced forgetting (active suppression of competing memories)
 
 ### Planned
 
-- [ ] CLI commands (`hermes synapse status/consolidate/export`)
+- [ ] Plugin CLI commands (`hermes synapse status/consolidate/export`)
 - [ ] Leiden community detection for schema extraction
 - [ ] LLM-powered schema summaries
 - [ ] Graph visualization dashboard

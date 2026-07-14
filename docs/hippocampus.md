@@ -96,16 +96,41 @@ The hippocampus detects this as a contradiction and would mark the PostgreSQL ed
 
 ## Integration
 
-The hippocampus algorithms are designed to run as a periodic background task via Hermes's cron system:
+The hippocampus consolidation runs as an offline batch — the "sleep replay" cycle. Synapse ships a standalone script that connects to FalkorDB directly, runs the hippocampus batch, and prints a JSON summary.
 
-```yaml
-# In Hermes cron
-schedule: "0 */6 * * *"  # Every 6 hours
-prompt: "Run Synapse hippocampus consolidation"
-```
+### Via Hermes Cron (recommended)
 
-Or can be triggered manually via a future CLI command:
+Set up a no-agent cron job that runs the script on a schedule:
 
 ```bash
-hermes synapse consolidate  # Future feature
+# Create a no-agent cron job (runs the script, delivers stdout)
+hermes cron create "every 6h" "python /path/to/synapse/scripts/consolidate.py" --no-agent
 ```
+
+The `consolidation_interval_hours` config value (default: 6.0) is a recommendation for the cron cadence — set your Hermes cron schedule to match.
+
+### Manual
+
+```bash
+# Basic consolidation (Hebbian + contradiction detection)
+python scripts/consolidate.py
+
+# With schema extraction
+python scripts/consolidate.py --schemas
+
+# With pruning candidate report (does not delete — report only)
+python scripts/consolidate.py --prune
+
+# With a custom group ID
+python scripts/consolidate.py --group-id my-agent --schemas --prune
+```
+
+### What It Does
+
+| Step | Algorithm | Output |
+|------|-----------|--------|
+| 1. Drain online contradictions | PredictionErrorDetector queue | Count of contradictions detected during episode ingestion |
+| 2. Offline contradiction detection | ConsolidationEngine | Count of cross-episode contradictions found |
+| 3. Hebbian strengthening | ConsolidationEngine | Count of co-occurring entity groups |
+| 4. Schema extraction (`--schemas`) | SchemaExtractor | Count of schema clusters + top schema summary |
+| 5. Pruning candidates (`--prune`) | ForgettingCurve + SalienceScorer | Count + list of entities below prune threshold |
