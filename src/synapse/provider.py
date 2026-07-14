@@ -11,6 +11,7 @@ Optimizations baked in:
 - Hippocampus coordinator wired into episode ingestion + recall
 - Bounded graph fetch (get_recent_edges) for post-episode processing
 - Pattern completion (CA3 BFS) wired into synapse_query results
+- Retrieval-induced forgetting (RIF) — competing memories sink in ranking
 """
 
 from __future__ import annotations
@@ -214,7 +215,6 @@ class SynapseMemoryProvider:
         if not self._initialized or not self._turn_buffer:
             return
         self._turn_buffer.add(user_content, assistant_content)
-        # Advance hippocampus turn counter (reconsolidation windows)
         if self._hippocampus:
             self._hippocampus.tick()
         if self._turn_buffer.should_flush():
@@ -245,9 +245,6 @@ class SynapseMemoryProvider:
                 )
                 future.result(timeout=120)
 
-                # Run hippocampus algorithms on the ingested episode.
-                # Bounded fetch: only the 50 most recent edges + all entity
-                # names. Full graph fetch was O(edges) — this is O(limit).
                 if self._hippocampus:
                     from synapse.falkor import FalkorHelper
                     helper = FalkorHelper(
@@ -296,7 +293,6 @@ class SynapseMemoryProvider:
         if tool_name == "synapse_query" and self._retrieval:
             from synapse.tools import handle_tool_call
             result = handle_tool_call(args, self._retrieval)
-            # Feed recalled entities into reconsolidation tracker + pattern completion
             if self._hippocampus:
                 try:
                     result_dict = json.loads(result)
@@ -306,6 +302,8 @@ class SynapseMemoryProvider:
                         entities.add(r.get("from_node", ""))
                         entities.add(r.get("to_node", ""))
                     entities.discard("")
+
+                    neighborhood_edges: list[dict] = []
 
                     # Pattern completion: expand BM25 results into neighborhood
                     if entities and self._hippocampus:
@@ -322,7 +320,6 @@ class SynapseMemoryProvider:
                             expanded = self._hippocampus.expand_recall(
                                 args.get("query", ""), neighborhood_edges
                             )
-                            # Merge expanded facts into results
                             expanded_facts = expanded.get("facts", [])
                             existing_facts = {r.get("fact", "") for r in bm25_results}
                             for ef in expanded_facts:
@@ -330,14 +327,32 @@ class SynapseMemoryProvider:
                                 if fact and fact not in existing_facts:
                                     bm25_results.append(ef)
                                     existing_facts.add(fact)
-                            result_dict["results"] = bm25_results[:20]
                             result_dict["pattern_completion"] = {
                                 "expanded_entities": expanded.get("entities", []),
                                 "depth": expanded.get("depth", 0),
                             }
 
+                    # Reconsolidation + RIF: pass neighborhood edges for Jaccard
                     if entities:
-                        self._hippocampus.on_recall(list(entities))
+                        self._hippocampus.on_recall(
+                            list(entities), edges=neighborhood_edges or None
+                        )
+
+                    # RIF ranking: penalized entities sink in results
+                    if self._hippocampus and bm25_results:
+                        def rif_sort_key(r):
+                            from_p = self._hippocampus.get_rif_penalty(
+                                r.get("from_node", "")
+                            )
+                            to_p = self._hippocampus.get_rif_penalty(
+                                r.get("to_node", "")
+                            )
+                            # Penalty = max of from/to — both endpoints matter
+                            return -(max(from_p, to_p))  # negative = lower rank
+
+                        bm25_results.sort(key=rif_sort_key)
+                        result_dict["results"] = bm25_results[:20]
+
                     result = json.dumps(result_dict)
                 except Exception:
                     pass
