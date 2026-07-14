@@ -69,6 +69,8 @@ Your agent now has a memory that:
 - ✅ Tracks recall events for spaced repetition (reconsolidation)
 - ✅ Detects novelty and contradictions in new episodes (prediction error)
 - ✅ Consolidates memories in the background like sleep replay (`scripts/consolidate.py` via Hermes cron)
+- ✅ Expands search results with context subgraph (pattern completion / CA3)
+- ✅ Suppresses competing memories in search ranking (retrieval-induced forgetting)
 - ✅ Lets the agent explicitly save facts worth remembering forever
 
 ---
@@ -78,7 +80,7 @@ Your agent now has a memory that:
 This is the novel contribution. Nine algorithms inspired by biological memory — the part that makes Synapse a *brain*, not a *database*. All nine are wired into the live runtime through a single `Hippocampus` coordinator that exposes two entry points:
 
 - **`on_episode_ingested()`** — fires after each batch episode is ingested. Runs prediction error detection, salience scoring, reconsolidation boosts, and pattern separation.
-- **`on_recall()`** — fires when entities are retrieved via `synapse_query`. Opens the reconsolidation window for those entities (spaced repetition effect).
+- **`on_recall()`** — fires when entities are retrieved via `synapse_query`. Opens the reconsolidation window (spaced repetition), runs pattern completion (CA3 subgraph expansion), and applies retrieval-induced forgetting (competing memories sink in ranking).
 
 ### Core Memory Management
 
@@ -115,9 +117,10 @@ This is the novel contribution. Nine algorithms inspired by biological memory �
 │  Every turn:                                              │
 │  ┌───────────┐  ┌────────────┐  ┌─────────────────────┐  │
 │  │  prefetch  │  │ sync_turn  │  │ synapse_remember   │  │
-│  │ (BM25      │  │ (batch +   │  │ (explicit write →  │  │
-│  │  cache)    │  │  tick +    │  │  max salience,     │  │
-│  │            │  │  ingest)   │  │  never decays)     │  │
+│  │ (BM25 +    │  │ (batch +   │  │ (explicit write →  │  │
+│  │  pattern   │  │  tick +    │  │  max salience,     │  │
+│  │  completion│  │  ingest)   │  │  never decays)     │  │
+│  │  + RIF)    │  │            │  │                    │  │
 │  └───────────┘  └────────────┘  └─────────────────────┘  │
 │                       │                                   │
 │                       ▼                                   │
@@ -136,6 +139,9 @@ This is the novel contribution. Nine algorithms inspired by biological memory �
 │              │ on_recall():     │                          │
 │              │  • reconsol.    │                          │
 │              │    window opens  │                          │
+│              │  • pattern       │                          │
+│              │    completion    │                          │
+│              │  • RIF penalty  │                          │
 │              └─────────────────┘                          │
 │                                                           │
 │  Background ("sleep") — via scripts/consolidate.py:        │
@@ -158,7 +164,7 @@ This is the novel contribution. Nine algorithms inspired by biological memory �
 
 | Tool | Purpose | Example |
 |------|---------|---------|
-| `synapse_query` | Search memories. Set `at_time` for point-in-time queries. | *"What database were we using before the switch?"* |
+| `synapse_query` | Search memories. Set `at_time` for point-in-time queries. Results expanded with pattern completion. | *"What database were we using before the switch?"* |
 | `synapse_remember` | Save a durable fact permanently. Never decays. | *"User prefers concise responses"* |
 
 ---
@@ -303,7 +309,7 @@ src/synapse/
 ├── tools.py               synapse_query + synapse_remember
 ├── provider.py            MemoryProvider implementation
 └── hippocampus/
-    ├── __init__.py            Hippocampus coordinator (wires all 9 algorithms)
+    ├── __init__.py            Hippocampus coordinator (wires all 9 algorithms + RIF)
     ├── salience.py            Salience scoring (4-factor)
     ├── forgetting.py          Ebbinghaus decay curve
     ├── consolidation.py       Hebbian + contradiction detection
@@ -333,6 +339,7 @@ The hippocampus layer is grounded in neuroscience research:
 | CA3 Autoassociative Memory | Rolls (2015) |
 | Cognitive Maps | O'Keefe & Nadel (1978) |
 | Hippocampal Replay | Wilson & McNaughton (1994) |
+| Retrieval-Induced Forgetting | Anderson, Bjork & Bjork (1994) |
 
 ---
 
@@ -350,13 +357,10 @@ The hippocampus layer is grounded in neuroscience research:
 - [x] Salience scoring + reconsolidation tracking on every episode
 - [x] Prediction error detection on every episode
 - [x] Consolidation script (`scripts/consolidate.py` — sleep replay via Hermes cron)
+- [x] Bounded graph fetch (`get_recent_edges` — O(50) per episode, not O(all edges))
+- [x] Pattern completion wired into `synapse_query` (CA3 BFS subgraph expansion)
+- [x] Retrieval-induced forgetting (competing memories sink in ranking, session-scoped)
 - [x] Pre-init tool call guard (Issue #16)
-
-### In Progress
-
-- [ ] Bounded graph fetch for post-episode hippocampus processing
-- [ ] Pattern completion wired into prefetch (CA3 subgraph expansion)
-- [ ] Retrieval-induced forgetting (active suppression of competing memories)
 
 ### Planned
 
