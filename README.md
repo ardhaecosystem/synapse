@@ -7,9 +7,9 @@
 Temporal knowledge graph memory that doesn't just *store* — it *remembers*.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml/badge.svg)](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](https://github.com/ardhaecosystem/synapse/blob/main/CONTRIBUTING.md)
+|[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
+|[![CI](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml/badge.svg)](https://github.com/ardhaecosystem/synapse/actions/workflows/ci.yml)
+|[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](https://github.com/ardhaecosystem/synapse/blob/main/CONTRIBUTING.md)
 
 </div>
 
@@ -65,15 +65,20 @@ Your agent now has a memory that:
 
 - ✅ Remembers every conversation and extracts entities automatically
 - ✅ Knows when facts changed and can answer "what was true on June 20?"
-- ✅ Scores memory importance and forgets what doesn't matter
-- ✅ Consolidates memories in the background like sleep replay
+- ✅ Scores memory importance (salience + forgetting curve)
+- ✅ Tracks recall events for spaced repetition (reconsolidation)
+- ✅ Detects novelty and contradictions in new episodes (prediction error)
 - ✅ Lets the agent explicitly save facts worth remembering forever
+- ⏳ Consolidates memories in the background like sleep replay *(Phase 2 — scheduler pending)*
 
 ---
 
 ## The Hippocampus Layer
 
-This is the novel contribution. Nine algorithms inspired by biological memory — the part that makes Synapse a *brain*, not a *database*.
+This is the novel contribution. Nine algorithms inspired by biological memory — the part that makes Synapse a *brain*, not a *database*. All nine are wired into the live runtime through a single `Hippocampus` coordinator that exposes two entry points:
+
+- **`on_episode_ingested()`** — fires after each batch episode is ingested. Runs prediction error detection, salience scoring, reconsolidation boosts, and pattern separation.
+- **`on_recall()`** — fires when entities are retrieved via `synapse_query`. Opens the reconsolidation window for those entities (spaced repetition effect).
 
 ### Core Memory Management
 
@@ -110,13 +115,30 @@ This is the novel contribution. Nine algorithms inspired by biological memory �
 │  Every turn:                                              │
 │  ┌───────────┐  ┌────────────┐  ┌─────────────────────┐  │
 │  │  prefetch  │  │ sync_turn  │  │ synapse_remember   │  │
-│  │ (BM25 +    │  │ (batch +   │  │ (explicit write →  │  │
-│  │  pattern   │  │  prediction│  │  max salience,     │  │
-│  │  completion)│ │  error +   │  │  never decays)     │  │
-│  │            │  │  reconsol.)│  │                    │  │
+│  │ (BM25      │  │ (batch +   │  │ (explicit write →  │  │
+│  │  cache)    │  │  tick +    │  │  max salience,     │  │
+│  │            │  │  ingest)   │  │  never decays)     │  │
 │  └───────────┘  └────────────┘  └─────────────────────┘  │
+│                       │                                   │
+│                       ▼                                   │
+│              ┌─────────────────┐                          │
+│              │  Hippocampus     │                          │
+│              │  Coordinator      │                          │
+│              │                  │                          │
+│              │ on_episode_      │                          │
+│              │  ingested():      │                          │
+│              │  • prediction    │                          │
+│              │    error         │                          │
+│              │  • salience      │                          │
+│              │  • reconsol.    │                          │
+│              │  • pattern sep. │                          │
+│              │                  │                          │
+│              │ on_recall():     │                          │
+│              │  • reconsol.    │                          │
+│              │    window opens  │                          │
+│              └─────────────────┘                          │
 │                                                           │
-│  Background ("sleep"):                                    │
+│  Background ("sleep") — Phase 2:                          │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │ Schema Extraction → "User works on AI projects"      │  │
 │  │ Forgetting Curve → prunes forgotten memories         │  │
@@ -281,6 +303,7 @@ src/synapse/
 ├── tools.py               synapse_query + synapse_remember
 ├── provider.py            MemoryProvider implementation
 └── hippocampus/
+    ├── __init__.py            Hippocampus coordinator (wires all 9 algorithms)
     ├── salience.py            Salience scoring (4-factor)
     ├── forgetting.py          Ebbinghaus decay curve
     ├── consolidation.py       Hebbian + contradiction detection
@@ -312,17 +335,33 @@ The hippocampus layer is grounded in neuroscience research:
 
 ## Roadmap
 
+### Done
+
 - [x] Core memory provider (Graphiti + FalkorDB)
 - [x] 9 hippocampus algorithms
+- [x] Hippocampus coordinator — all 9 algorithms wired into runtime
 - [x] `synapse_remember` explicit memory tool
 - [x] Brain-aware system prompt (native memory detection)
 - [x] BM25-only optimized prefetch
 - [x] Batch episode ingestion
+- [x] Salience scoring + reconsolidation tracking on every episode
+- [x] Prediction error detection on every episode
+- [x] Pre-init tool call guard (Issue #16)
+
+### In Progress
+
+- [ ] Consolidation scheduler (CLI/cron hook — "sleep replay" cycle)
+- [ ] Bounded graph fetch for post-episode hippocampus processing
+- [ ] Pattern completion wired into prefetch (CA3 subgraph expansion)
+- [ ] Retrieval-induced forgetting (active suppression of competing memories)
+
+### Planned
+
 - [ ] CLI commands (`hermes synapse status/consolidate/export`)
 - [ ] Leiden community detection for schema extraction
 - [ ] LLM-powered schema summaries
 - [ ] Graph visualization dashboard
-- [ ] Multi-agent shared memory via FalkorDB replication
+- [ ] Multi-agent shared memory (schema-layer sharing with privacy controls)
 
 ---
 
