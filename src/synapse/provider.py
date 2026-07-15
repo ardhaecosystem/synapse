@@ -103,9 +103,10 @@ class SynapseMemoryProvider:
         )
         self._graphiti = Graphiti(
             graph_driver=self._driver,
-            # ponytail: json_object works on all OpenAI-compatible endpoints (DeepSeek,
-            # OpenRouter, vLLM, etc.); json_schema only works on api.openai.com + constrained-decoding servers.
-            # Add a SYNAPSE_STRUCTURED_OUTPUT_MODE env var if a user needs json_schema on vLLM/llama.cpp.
+            # ponytail: json_object works on all OpenAI-compatible endpoints
+            # (DeepSeek, OpenRouter, vLLM, etc.); json_schema only works on
+            # api.openai.com + constrained-decoding servers.
+            # Add SYNAPSE_STRUCTURED_OUTPUT_MODE env var if user needs json_schema.
             llm_client=OpenAIGenericClient(config=llm_config, structured_output_mode='json_object'),
             embedder=OpenAIEmbedder(config=OpenAIEmbedderConfig(
                 api_key=self._config.llm_api_key,
