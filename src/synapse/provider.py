@@ -87,7 +87,7 @@ class SynapseMemoryProvider:
         from graphiti_core.driver.falkordb_driver import FalkorDriver
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
         from graphiti_core.llm_client.config import LLMConfig
-        from graphiti_core.llm_client.openai_client import OpenAIClient
+        from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 
         self._driver = FalkorDriver(
             host=self._config.falkordb_host,
@@ -103,7 +103,11 @@ class SynapseMemoryProvider:
         )
         self._graphiti = Graphiti(
             graph_driver=self._driver,
-            llm_client=OpenAIClient(config=llm_config),
+            # ponytail: json_object works on all OpenAI-compatible endpoints
+            # (DeepSeek, OpenRouter, vLLM, etc.); json_schema only works on
+            # api.openai.com + constrained-decoding servers.
+            # Add SYNAPSE_STRUCTURED_OUTPUT_MODE env var if user needs json_schema.
+            llm_client=OpenAIGenericClient(config=llm_config, structured_output_mode='json_object'),
             embedder=OpenAIEmbedder(config=OpenAIEmbedderConfig(
                 api_key=self._config.llm_api_key,
                 base_url=self._config.llm_base_url,
